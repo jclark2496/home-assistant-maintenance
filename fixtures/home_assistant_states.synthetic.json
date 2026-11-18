@@ -1,0 +1,47 @@
+[
+  {
+    "entity_id": "update.example_hub_firmware",
+    "state": "on",
+    "attributes": {
+      "friendly_name": "Example Hub Firmware",
+      "installed_version": "1.2.3",
+      "latest_version": "1.2.4"
+    }
+  },
+  {
+    "entity_id": "update.example_ignored_update",
+    "state": "off",
+    "attributes": {
+      "friendly_name": "Example Ignored Update",
+      "installed_version": "4.0.0",
+      "latest_version": "4.0.0"
+    }
+  },
+  {
+    "entity_id": "sensor.example_window_battery",
+    "state": "24",
+    "attributes": {
+      "friendly_name": "Example Window Battery",
+      "device_class": "battery",
+      "unit_of_measurement": "%"
+    }
+  },
+  {
+    "entity_id": "sensor.example_lock_battery",
+    "state": "29",
+    "attributes": {
+      "friendly_name": "Example Lock Raw Name",
+      "device_class": "battery",
+      "unit_of_measurement": "%"
+    }
+  },
+  {
+    "entity_id": "sensor.example_phone_battery",
+    "state": "5",
+    "attributes": {
+      "friendly_name": "Example Phone Battery",
+      "device_class": "battery",
+      "unit_of_measurement": "%"
+    }
+  }
+]

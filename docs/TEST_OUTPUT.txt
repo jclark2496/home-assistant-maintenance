@@ -1,0 +1,7 @@
+This file is intentionally not a captured local test transcript.
+
+Run the offline suite in a clean checkout:
+
+    python3 -m unittest discover -s tests -v
+
+CI also builds and installs the wheel and smoke-tests the installed `ha-maintenance` command. Current verification results belong in release notes or CI logs, not a potentially stale repository artifact.

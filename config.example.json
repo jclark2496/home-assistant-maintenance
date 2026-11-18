@@ -1,0 +1,25 @@
+{
+  "home_assistant_url": "http://homeassistant.local:8123",
+  "reminder_list": "Home Maintenance",
+  "low_battery_threshold": 25,
+  "special_battery_thresholds": {
+    "sensor.example_lock_battery": 30
+  },
+  "special_battery_names": {
+    "sensor.example_lock_battery": "Entry Lock Battery"
+  },
+  "ignored_battery_entities": [
+    "sensor.example_phone_battery"
+  ],
+  "ignored_update_entities": [
+    "update.example_ignored_update"
+  ],
+  "max_updates_in_title": 6,
+  "max_batteries_in_title": 8,
+  "max_title_length": 900,
+  "title_prefix": "Review Home Assistant",
+  "state_path": "~/.config/home-assistant-maintenance/state.json",
+  "remindctl_path": "/opt/homebrew/bin/remindctl",
+  "http_timeout": 30,
+  "reminder_timeout": 30
+}
