@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import secrets
 from typing import Any, Mapping, Sequence
 
 
@@ -68,7 +69,7 @@ def battery_items(states: Sequence[Mapping[str, Any]], config: DigestConfig) -> 
         except (TypeError, ValueError):
             continue
         threshold = float(config.special_battery_thresholds.get(entity_id, config.low_battery_threshold))
-        if value <= threshold:
+        if 0 <= value <= 100 and value <= threshold:
             items.append({
                 "type": "battery",
                 "entity_id": entity_id,
@@ -87,8 +88,10 @@ def issue_fingerprint(updates: Sequence[Mapping[str, str]], batteries: Sequence[
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def delivery_marker(fingerprint: str) -> str:
-    return f"[home-assistant-maintenance:{fingerprint}]"
+def delivery_marker(fingerprint: str, nonce: str | None = None) -> str:
+    """Return an attempt-unique marker retained in pending state for recovery."""
+    attempt_nonce = nonce or secrets.token_hex(8)
+    return f"[home-assistant-maintenance:{fingerprint}:{attempt_nonce}]"
 
 
 def _bounded(items: list[str], total: int, limit: int) -> str:

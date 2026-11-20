@@ -86,6 +86,23 @@ class DigestWorkflowTests(unittest.TestCase):
             self.assertEqual(second.outcome, "duplicate_suppressed")
             self.assertEqual(len(reminder.calls), 1)
 
+    def test_invalid_battery_percentages_are_not_low_batteries(self):
+        for value in ('-1', '101', 'nan', 'inf', '-inf', 'unavailable'):
+            states = [{'entity_id': 'sensor.test_battery', 'state': value,
+                       'attributes': {'unit_of_measurement': '%', 'device_class': 'battery'}}]
+            self.assertEqual(battery_items(states, self.config), [], value)
+
+    def test_distinct_state_stores_cannot_verify_against_old_delivery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reminder = FakeReminder()
+            first_store = StateStore(Path(directory) / 'first.json')
+            second_store = StateStore(Path(directory) / 'second.json')
+            run_once(source=FakeSource(self.states), reminder=reminder, state_store=first_store, config=self.config, now=self.now)
+            reminder.fail = True
+            with self.assertRaises(UncertainDeliveryError):
+                run_once(source=FakeSource(self.states), reminder=reminder, state_store=second_store, config=self.config, now=self.now)
+            self.assertNotEqual(reminder.calls[0]['marker'], reminder.calls[1]['marker'])
+
     def test_changed_battery_value_creates_new_digest(self):
         with tempfile.TemporaryDirectory() as directory:
             store = StateStore(Path(directory) / "state.json")
