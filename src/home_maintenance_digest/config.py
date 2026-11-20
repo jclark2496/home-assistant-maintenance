@@ -8,7 +8,7 @@ import stat
 from typing import Any
 from urllib.parse import urlparse
 
-from .core import DigestConfig
+from .core import BackupRule, DigestConfig, IndicatorRule, UnavailableRule, parse_duration
 
 
 class ConfigurationError(RuntimeError):
@@ -78,8 +78,12 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
             special_battery_names={str(k): str(v) for k, v in dict(raw.get("special_battery_names", {})).items()},
             ignored_battery_entities=frozenset(map(str, raw.get("ignored_battery_entities", []))),
             ignored_update_entities=frozenset(map(str, raw.get("ignored_update_entities", []))),
+            unavailable_rules=tuple(_unavailable_rule(value) for value in _mapping_list(raw, "unavailable_entities")),
+            backup_rules=tuple(_backup_rule(value) for value in _mapping_list(raw, "backup_entities")),
+            indicator_rules=tuple(_indicator_rule(value) for value in _mapping_list(raw, "maintenance_indicators")),
             max_updates_in_title=int(raw.get("max_updates_in_title", 6)),
             max_batteries_in_title=int(raw.get("max_batteries_in_title", 8)),
+            max_maintenance_in_title=int(raw.get("max_maintenance_in_title", 8)),
             max_title_length=int(raw.get("max_title_length", 900)),
             title_prefix=str(raw.get("title_prefix", "Review Home Assistant")),
         )
@@ -95,7 +99,8 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
             reminder_timeout=float(raw.get("reminder_timeout", 30)),
         )
     except (TypeError, ValueError) as exc:
-        raise ConfigurationError("config file contains an invalid value") from exc
+        detail = str(exc).strip()
+        raise ConfigurationError(f"config file contains an invalid value{': ' + detail if detail else ''}") from exc
 
 
 def write_configuration(*, directory: Path, base_url: str, reminder_list: str, token: str) -> None:
@@ -118,8 +123,12 @@ def write_configuration(*, directory: Path, base_url: str, reminder_list: str, t
         "special_battery_names": {},
         "ignored_battery_entities": [],
         "ignored_update_entities": [],
+        "unavailable_entities": [],
+        "backup_entities": [],
+        "maintenance_indicators": [],
         "max_updates_in_title": 6,
         "max_batteries_in_title": 8,
+        "max_maintenance_in_title": 8,
         "max_title_length": 900,
         "title_prefix": "Review Home Assistant",
         "state_path": str(directory / "state.json"),
@@ -147,3 +156,78 @@ def _atomic_private_json(path: Path, value: dict[str, Any]) -> None:
             temporary.unlink()
         except FileNotFoundError:
             pass
+
+
+def _mapping_list(raw: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = raw.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise ValueError(f"{key} must be a list of objects")
+    return value
+
+
+def _unavailable_rule(value: dict[str, Any]) -> UnavailableRule:
+    allowed = {"entity_id", "name", "threshold"}
+    _reject_unknown(value, allowed, "unavailable entity")
+    return UnavailableRule(
+        entity_id=_required_string(value, "entity_id"),
+        name=_optional_string(value, "name"),
+        threshold=parse_duration(value.get("threshold", "2h")),
+    )
+
+
+def _backup_rule(value: dict[str, Any]) -> BackupRule:
+    allowed = {"entity_id", "name", "failure_states", "max_age", "timestamp_attribute", "timestamp_timezone"}
+    _reject_unknown(value, allowed, "backup entity")
+    max_age = value.get("max_age")
+    return BackupRule(
+        entity_id=_required_string(value, "entity_id"),
+        name=_optional_string(value, "name"),
+        failure_states=_string_set(value, "failure_states"),
+        max_age=parse_duration(max_age) if max_age is not None else None,
+        timestamp_attribute=_optional_string(value, "timestamp_attribute"),
+        timestamp_timezone=_optional_string(value, "timestamp_timezone"),
+    )
+
+
+def _indicator_rule(value: dict[str, Any]) -> IndicatorRule:
+    allowed = {"entity_id", "name", "problem_states", "operator", "threshold", "unit", "value_attribute"}
+    _reject_unknown(value, allowed, "maintenance indicator")
+    threshold = value.get("threshold")
+    return IndicatorRule(
+        entity_id=_required_string(value, "entity_id"),
+        name=_optional_string(value, "name"),
+        problem_states=_string_set(value, "problem_states"),
+        operator=_optional_string(value, "operator"),
+        threshold=float(threshold) if threshold is not None else None,
+        unit=_optional_string(value, "unit"),
+        value_attribute=_optional_string(value, "value_attribute"),
+    )
+
+
+def _required_string(value: dict[str, Any], key: str) -> str:
+    result = value.get(key)
+    if not isinstance(result, str) or not result.strip():
+        raise ValueError(f"{key} must be a non-empty string")
+    return result
+
+
+def _optional_string(value: dict[str, Any], key: str) -> str | None:
+    result = value.get(key)
+    if result is None:
+        return None
+    if not isinstance(result, str) or not result.strip():
+        raise ValueError(f"{key} must be a non-empty string")
+    return result
+
+
+def _string_set(value: dict[str, Any], key: str) -> frozenset[str]:
+    raw = value.get(key, [])
+    if not isinstance(raw, list) or any(not isinstance(item, str) or not item for item in raw):
+        raise ValueError(f"{key} must be a list of non-empty strings")
+    return frozenset(raw)
+
+
+def _reject_unknown(value: dict[str, Any], allowed: set[str], label: str) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"{label} has unknown fields: {', '.join(unknown)}")

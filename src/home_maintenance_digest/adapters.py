@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 import subprocess
 from typing import Any, Sequence
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -14,7 +15,7 @@ class AdapterError(RuntimeError):
 
 
 class HomeAssistantHttpSource:
-    """Read-only Home Assistant source using GET /api/states."""
+    """Read-only Home Assistant source using states and bounded history GETs."""
 
     def __init__(self, *, base_url: str, token: str, timeout: float = 30.0):
         self.base_url = base_url.rstrip("/")
@@ -40,6 +41,34 @@ class HomeAssistantHttpSource:
         if not isinstance(payload, list):
             raise AdapterError("Home Assistant /api/states did not return a list")
         return payload
+
+    def history(self, entity_ids: Sequence[str], *, start: datetime, end: datetime) -> dict[str, list[dict[str, Any]]]:
+        """Read bounded history for explicitly configured entities only."""
+        if not entity_ids:
+            return {}
+        start_text = _utc_iso(start)
+        query = urlencode({
+            "filter_entity_id": ",".join(entity_ids),
+            "end_time": _utc_iso(end),
+            "minimal_response": "",
+            "no_attributes": "",
+        })
+        payload = self._get_json(f"/api/history/period/{quote(start_text, safe='')}?{query}")
+        if not isinstance(payload, list):
+            raise AdapterError("Home Assistant history API did not return a list")
+        result = {entity_id: [] for entity_id in entity_ids}
+        for series in payload:
+            if not isinstance(series, list):
+                continue
+            series_entity = next((str(record.get("entity_id")) for record in series if isinstance(record, dict) and record.get("entity_id")), "")
+            if series_entity not in result:
+                continue
+            for record in series:
+                if isinstance(record, dict):
+                    normalized = dict(record)
+                    normalized.setdefault("entity_id", series_entity)
+                    result[series_entity].append(normalized)
+        return result
 
     def check(self) -> None:
         self._get_json("/api/")
@@ -116,3 +145,9 @@ def _contains_list_name(payload: Any, list_name: str) -> bool:
     if isinstance(payload, list):
         return any(isinstance(item, str) and item.casefold() == target for item in payload)
     return False
+
+
+def _utc_iso(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.astimezone()
+    return value.astimezone(timezone.utc).isoformat()

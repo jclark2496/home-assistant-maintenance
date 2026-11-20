@@ -10,7 +10,7 @@ from typing import Sequence
 
 from .adapters import AdapterError, HomeAssistantHttpSource, RemindctlAdapter
 from .config import ConfigurationError, default_config_dir, load_config, write_configuration
-from .workflow import CorruptStateError, LockBusyError, StateStore, UncertainDeliveryError, WorkflowError, make_preview, resolve_pending, run_once
+from .workflow import CorruptStateError, LockBusyError, StateStore, UncertainDeliveryError, WorkflowError, preview_from_source, resolve_pending, run_once
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,9 +44,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "doctor":
             return _doctor(config, source, reminder, store)
         if args.command == "preview":
-            preview = make_preview(list(source.states()), config.digest)
+            preview = preview_from_source(source, config.digest)
             if args.json:
-                print(json.dumps({"update_count": len(preview.updates), "battery_count": len(preview.batteries), "title": preview.title, "updates": preview.updates, "batteries": preview.batteries}, indent=2))
+                print(json.dumps({"update_count": len(preview.updates), "battery_count": len(preview.batteries), "unavailable_count": len(preview.unavailable), "backup_count": len(preview.backups), "indicator_count": len(preview.indicators), "title": preview.title, "updates": preview.updates, "batteries": preview.batteries, "unavailable": preview.unavailable, "backups": preview.backups, "indicators": preview.indicators}, indent=2))
             else:
                 _print_preview(preview)
             return 0
@@ -56,7 +56,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 2
             result = run_once(source=source, reminder=reminder, state_store=store, config=config.digest)
             if result.outcome not in {"clean", "duplicate_suppressed"}:
-                print(f"{result.outcome}: {result.update_count} update(s), {result.battery_count} low battery item(s)")
+                print(f"{result.outcome}: {result.update_count} update(s), {result.battery_count} low battery item(s), {result.unavailable_count} unavailable, {result.backup_count} backup, {result.indicator_count} indicator finding(s)")
             return 0
         if args.command == "resolve":
             if not args.yes:
@@ -93,6 +93,8 @@ def _configure(directory: Path) -> int:
 def _doctor(config, source, reminder, store: StateStore) -> int:
     checks: list[tuple[str, bool, str]] = []
     checks.append(("configuration", True, "valid; credentials file permissions are owner-only"))
+    selections = (len(config.digest.unavailable_rules), len(config.digest.backup_rules), len(config.digest.indicator_rules))
+    checks.append(("maintenance selections", True, f"{selections[0]} unavailable, {selections[1]} backup, {selections[2]} indicator mapping(s); unconfigured categories are off"))
     try:
         source.check()
         checks.append(("Home Assistant", True, "read-only API authentication succeeded"))
@@ -127,13 +129,19 @@ def _doctor(config, source, reminder, store: StateStore) -> int:
 
 def _print_preview(preview) -> None:
     if preview.title is None:
-        print("No actionable updates or low batteries.")
+        print("No actionable maintenance findings.")
         return
     print(preview.title)
     for item in preview.updates:
         print(f"- update: {item['name']} ({item['installed']} -> {item['latest']}) [{item['entity_id']}]")
     for item in preview.batteries:
         print(f"- battery: {item['name']} ({item['percent']}%) [{item['entity_id']}]")
+    for item in preview.unavailable:
+        print(f"- unavailable: {item['name']} (continuous for at least {item['duration']}) [{item['entity_id']}]")
+    for item in preview.backups:
+        print(f"- backup: {item['name']} ({item['status']}: {item['detail']}) [{item['entity_id']}]")
+    for item in preview.indicators:
+        print(f"- indicator: {item['name']} ({item['detail']}) [{item['entity_id']}]")
     print("Preview only; no reminder was created.")
 
 

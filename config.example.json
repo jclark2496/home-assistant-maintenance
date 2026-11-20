@@ -14,8 +14,55 @@
   "ignored_update_entities": [
     "update.example_ignored_update"
   ],
+  "unavailable_entities": [
+    {
+      "entity_id": "sensor.example_hub_status",
+      "name": "Example Hub",
+      "threshold": "2h"
+    }
+  ],
+  "backup_entities": [
+    {
+      "entity_id": "sensor.example_backup_status",
+      "name": "Home Assistant Backup",
+      "failure_states": ["failed", "error"]
+    },
+    {
+      "entity_id": "sensor.example_last_successful_backup",
+      "name": "Home Assistant Backup",
+      "max_age": "2d",
+      "timestamp_timezone": "UTC"
+    },
+    {
+      "entity_id": "sensor.example_backup_summary",
+      "name": "Home Assistant Backup",
+      "failure_states": ["failed"],
+      "max_age": "2d",
+      "timestamp_attribute": "last_success"
+    }
+  ],
+  "maintenance_indicators": [
+    {
+      "entity_id": "binary_sensor.example_filter_replace",
+      "name": "HVAC Filter",
+      "problem_states": ["on"]
+    },
+    {
+      "entity_id": "sensor.example_filter_life",
+      "name": "Water Filter",
+      "operator": "lte",
+      "threshold": 10,
+      "unit": "%"
+    },
+    {
+      "entity_id": "sensor.example_appliance_status",
+      "name": "Example Appliance",
+      "problem_states": ["fault", "error"]
+    }
+  ],
   "max_updates_in_title": 6,
   "max_batteries_in_title": 8,
+  "max_maintenance_in_title": 8,
   "max_title_length": 900,
   "title_prefix": "Review Home Assistant",
   "state_path": "~/.config/home-assistant-maintenance/state.json",

@@ -9,11 +9,23 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from .core import DigestConfig, battery_items, build_title, delivery_marker, issue_fingerprint, update_items
+from .core import (
+    DigestConfig,
+    backup_items,
+    battery_items,
+    build_title,
+    deduplicate_new_categories,
+    delivery_marker,
+    indicator_items,
+    issue_fingerprint,
+    unavailable_items,
+    update_items,
+)
 
 
 class StateSource(Protocol):
     def states(self) -> Sequence[Mapping[str, Any]]: ...
+    def history(self, entity_ids: Sequence[str], *, start: datetime, end: datetime) -> Mapping[str, Sequence[Mapping[str, Any]]]: ...
 
 
 class ReminderAdapter(Protocol):
@@ -42,7 +54,14 @@ class Preview:
     title: str | None
     updates: list[dict[str, str]]
     batteries: list[dict[str, str]]
+    unavailable: list[dict[str, str]]
+    backups: list[dict[str, str]]
+    indicators: list[dict[str, str]]
     fingerprint: str
+
+    @property
+    def total(self) -> int:
+        return sum(map(len, (self.updates, self.batteries, self.unavailable, self.backups, self.indicators)))
 
 
 @dataclass(frozen=True)
@@ -50,6 +69,9 @@ class RunResult:
     outcome: str
     update_count: int
     battery_count: int
+    unavailable_count: int
+    backup_count: int
+    indicator_count: int
     fingerprint: str
 
 
@@ -110,46 +132,69 @@ class StateStore:
         return backup
 
 
-def make_preview(states: Sequence[Mapping[str, Any]], config: DigestConfig) -> Preview:
+def history_window(config: DigestConfig, now: datetime) -> tuple[datetime, datetime] | None:
+    if not config.unavailable_rules:
+        return None
+    longest = max(rule.threshold for rule in config.unavailable_rules)
+    return now - longest, now
+
+
+def make_preview(states: Sequence[Mapping[str, Any]], config: DigestConfig, *, histories: Mapping[str, Sequence[Mapping[str, Any]]] | None = None, now: datetime | None = None) -> Preview:
+    current_time = now or datetime.now().astimezone()
     updates = update_items(states, config)
     batteries = battery_items(states, config)
-    fingerprint = issue_fingerprint(updates, batteries, config.reminder_list)
-    title = build_title(updates, batteries, config) if updates or batteries else None
-    return Preview(title, updates, batteries, fingerprint)
+    unavailable = unavailable_items(states, histories or {}, config, current_time)
+    backups = backup_items(states, config, current_time)
+    indicators = indicator_items(states, config)
+    unavailable, backups, indicators = deduplicate_new_categories(unavailable, backups, indicators)
+    fingerprint = issue_fingerprint(updates, batteries, config.reminder_list, unavailable, backups, indicators)
+    title = build_title(updates, batteries, config, unavailable, backups, indicators) if any((updates, batteries, unavailable, backups, indicators)) else None
+    return Preview(title, updates, batteries, unavailable, backups, indicators, fingerprint)
 
 
-def run_once(*, source: StateSource, reminder: ReminderAdapter, state_store: StateStore, config: DigestConfig, now: Callable[[], datetime] = datetime.now) -> RunResult:
+def preview_from_source(source: StateSource, config: DigestConfig, now: datetime | None = None) -> Preview:
+    current_time = now or datetime.now().astimezone()
+    states = list(source.states())
+    histories: Mapping[str, Sequence[Mapping[str, Any]]] = {}
+    window = history_window(config, current_time)
+    if window:
+        histories = source.history([rule.entity_id for rule in config.unavailable_rules], start=window[0], end=window[1])
+    return make_preview(states, config, histories=histories, now=current_time)
+
+
+def run_once(*, source: StateSource, reminder: ReminderAdapter, state_store: StateStore, config: DigestConfig, now: Callable[[], datetime] = lambda: datetime.now().astimezone()) -> RunResult:
     with state_store.lock():
         state = state_store.load()
         pending = state.get("pending_delivery")
         if isinstance(pending, dict):
+            counts = _pending_counts(pending)
             fingerprint = str(pending.get("fingerprint", ""))
             marker = str(pending.get("marker", ""))
             pending_list = str(pending.get("list") or config.reminder_list)
             matches = reminder.find_by_marker(list_name=pending_list, marker=marker)
             if matches:
                 state.pop("pending_delivery", None)
-                state.update(_confirmed_state(fingerprint, int(pending.get("update_count", 0)), int(pending.get("battery_count", 0)), now(), "reconciled"))
+                state.update(_confirmed_state(fingerprint, counts, now(), "reconciled"))
                 state_store.save(state)
-                return RunResult("delivery_reconciled", int(pending.get("update_count", 0)), int(pending.get("battery_count", 0)), fingerprint)
+                return _result("delivery_reconciled", counts, fingerprint)
             raise UncertainDeliveryError("a prior delivery is unresolved; no reminder was written. Inspect Reminders, then use 'resolve'")
 
-        preview = make_preview(list(source.states()), config)
         current_time = now()
-        if not preview.updates and not preview.batteries:
-            state.update(_confirmed_state(preview.fingerprint, 0, 0, current_time, "clean"))
+        preview = preview_from_source(source, config, current_time)
+        counts = _preview_counts(preview)
+        if preview.total == 0:
+            state.update(_confirmed_state(preview.fingerprint, counts, current_time, "clean"))
             state_store.save(state)
-            return RunResult("clean", 0, 0, preview.fingerprint)
+            return _result("clean", counts, preview.fingerprint)
         if state.get("last_confirmed_fingerprint") == preview.fingerprint:
-            return RunResult("duplicate_suppressed", len(preview.updates), len(preview.batteries), preview.fingerprint)
+            return _result("duplicate_suppressed", counts, preview.fingerprint)
 
         marker = delivery_marker(preview.fingerprint)
         state["pending_delivery"] = {
             "fingerprint": preview.fingerprint,
             "marker": marker,
             "list": config.reminder_list,
-            "update_count": len(preview.updates),
-            "battery_count": len(preview.batteries),
+            **counts,
             "started_at": current_time.isoformat(),
         }
         state_store.save(state)
@@ -162,18 +207,18 @@ def run_once(*, source: StateSource, reminder: ReminderAdapter, state_store: Sta
                 matches = []
             if matches:
                 state.pop("pending_delivery", None)
-                state.update(_confirmed_state(preview.fingerprint, len(preview.updates), len(preview.batteries), now(), "readback_after_error"))
+                state.update(_confirmed_state(preview.fingerprint, counts, now(), "readback_after_error"))
                 state_store.save(state)
-                return RunResult("reminder_added_readback", len(preview.updates), len(preview.batteries), preview.fingerprint)
+                return _result("reminder_added_readback", counts, preview.fingerprint)
             raise UncertainDeliveryError("reminder command failed and readback found no marker; state remains pending and no automatic retry will occur") from exc
 
         matches = reminder.find_by_marker(list_name=config.reminder_list, marker=marker)
         if not matches:
             raise UncertainDeliveryError("reminder command returned success but readback found no marker; state remains pending")
         state.pop("pending_delivery", None)
-        state.update(_confirmed_state(preview.fingerprint, len(preview.updates), len(preview.batteries), now(), "readback_confirmed"))
+        state.update(_confirmed_state(preview.fingerprint, counts, now(), "readback_confirmed"))
         state_store.save(state)
-        return RunResult("reminder_added", len(preview.updates), len(preview.batteries), preview.fingerprint)
+        return _result("reminder_added", counts, preview.fingerprint)
 
 
 def resolve_pending(*, state_store: StateStore, outcome: str, now: datetime) -> None:
@@ -186,18 +231,23 @@ def resolve_pending(*, state_store: StateStore, outcome: str, now: datetime) -> 
             raise WorkflowError("there is no pending delivery to resolve")
         state.pop("pending_delivery", None)
         if outcome == "delivered":
-            state.update(_confirmed_state(str(pending["fingerprint"]), int(pending.get("update_count", 0)), int(pending.get("battery_count", 0)), now, "operator_confirmed"))
+            state.update(_confirmed_state(str(pending["fingerprint"]), _pending_counts(pending), now, "operator_confirmed"))
         else:
             state["last_resolution"] = {"outcome": outcome, "at": now.isoformat()}
         state_store.save(state)
 
 
-def _confirmed_state(fingerprint: str, updates: int, batteries: int, now: datetime, evidence: str) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "last_confirmed_fingerprint": fingerprint,
-        "last_update_count": updates,
-        "last_battery_count": batteries,
-        "last_confirmed_at": now.isoformat(),
-        "last_confirmation_evidence": evidence,
-    }
+def _preview_counts(preview: Preview) -> dict[str, int]:
+    return {"update_count": len(preview.updates), "battery_count": len(preview.batteries), "unavailable_count": len(preview.unavailable), "backup_count": len(preview.backups), "indicator_count": len(preview.indicators)}
+
+
+def _pending_counts(pending: Mapping[str, Any]) -> dict[str, int]:
+    return {key: int(pending.get(key, 0)) for key in ("update_count", "battery_count", "unavailable_count", "backup_count", "indicator_count")}
+
+
+def _result(outcome: str, counts: Mapping[str, int], fingerprint: str) -> RunResult:
+    return RunResult(outcome, counts["update_count"], counts["battery_count"], counts["unavailable_count"], counts["backup_count"], counts["indicator_count"], fingerprint)
+
+
+def _confirmed_state(fingerprint: str, counts: Mapping[str, int], now: datetime, evidence: str) -> dict[str, Any]:
+    return {"schema_version": 1, "last_confirmed_fingerprint": fingerprint, "last_update_count": counts["update_count"], "last_battery_count": counts["battery_count"], "last_unavailable_count": counts["unavailable_count"], "last_backup_count": counts["backup_count"], "last_indicator_count": counts["indicator_count"], "last_confirmed_at": now.isoformat(), "last_confirmation_evidence": evidence}

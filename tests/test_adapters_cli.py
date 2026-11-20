@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from home_maintenance_digest.adapters import HomeAssistantHttpSource, RemindctlAdapter, _contains_list_name
 from home_maintenance_digest.cli import build_parser, main
@@ -29,6 +31,26 @@ class AdapterTests(unittest.TestCase):
         request = mocked_urlopen.call_args.args[0]
         self.assertEqual(request.get_method(), "GET")
         self.assertEqual(request.get_header("Authorization"), "Bearer fake")
+
+    @patch("home_maintenance_digest.adapters.urlopen")
+    def test_history_is_bounded_get_and_normalizes_minimal_records(self, mocked_urlopen):
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value = io.StringIO(json.dumps([[
+            {"entity_id": "sensor.synthetic", "state": "unavailable", "last_changed": "2026-11-20T10:00:00Z"},
+            {"state": "unavailable", "last_changed": "2026-11-20T11:00:00Z"},
+        ]]))
+        mocked_urlopen.return_value = response
+        source = HomeAssistantHttpSource(base_url="http://ha.example:8123", token="fake")
+        result = source.history(["sensor.synthetic"], start=datetime(2026, 11, 20, 10, tzinfo=timezone.utc), end=datetime(2026, 11, 20, 12, tzinfo=timezone.utc))
+        self.assertEqual(result["sensor.synthetic"][1]["entity_id"], "sensor.synthetic")
+        request = mocked_urlopen.call_args.args[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertIn("/api/history/period/", request.full_url)
+        self.assertIn("filter_entity_id=sensor.synthetic", request.full_url)
+        self.assertIn("end_time=", request.full_url)
+        query = parse_qs(urlsplit(request.full_url).query, keep_blank_values=True)
+        self.assertEqual(query["minimal_response"], [""])
+        self.assertEqual(query["no_attributes"], [""])
 
     @patch("home_maintenance_digest.adapters.subprocess.run")
     def test_remindctl_add_uses_argv_and_safe_noninteractive_flags(self, mocked_run):

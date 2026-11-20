@@ -27,11 +27,14 @@ Hermes requires cron scripts to resolve inside `~/.hermes/scripts/`. `--interpre
 
 ```bash
 ~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance configure
+${EDITOR:-vi} ~/.config/home-assistant-maintenance/config.json
 ~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance doctor
 ~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance preview
 ```
 
-Do not paste the token into Hermes. `configure` uses hidden terminal input and owner-only files. Fix every doctor failure. Review the complete preview.
+Do not paste the token into Hermes. `configure` uses hidden terminal input and owner-only files. The generated configuration leaves unavailable, backup, and generic indicator categories off. Opt in only entity IDs whose Home Assistant state/attributes you have inspected; use `config.example.json` as syntax, not as a claim about a universal integration schema. In particular, do not guess backup timestamp fields or fault/alarm states. Fix every doctor failure and review the complete preview.
+
+`preview` is read-only. It uses `/api/states` and, only when unavailable rules are configured, bounded `/api/history/period` GET requests. Insufficient history does not create an unavailable finding. Unknown or timezone-ambiguous backup timestamps are not labeled stale. Re-run `doctor` and `preview` after each mapping change.
 
 If desired, manually approve exactly one real write:
 
@@ -39,7 +42,7 @@ If desired, manually approve exactly one real write:
 ~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance send --yes
 ```
 
-Confirm the Reminder exists in the configured list before scheduling. This repository and its tests do not perform that live verification for you.
+Confirm the Reminder exists in the configured list before scheduling. This repository and its tests do not perform that live verification for you. Offline tests and an installed-CLI check are not evidence that your Recorder retention, backup integration schema, Reminders permission, or scheduled runtime works.
 
 ## 3. Create a paused job
 
