@@ -1,6 +1,6 @@
 # Home Assistant Maintenance Workflow
 
-Get one Apple Reminder when a new set of home maintenance jobs needs attention. The workflow reads Home Assistant on your Mac, gathers low batteries and available updates, and can also flag persistent outages, backup problems, and service indicators you select.
+Get one Apple Reminder when a new set of home maintenance jobs needs attention. The workflow runs on your Mac, reads a reachable Home Assistant instance, gathers low batteries and available updates, and can also flag persistent outages, backup problems, and service indicators you select.
 
 **[Try the offline quickstart](#quickstart)** · [Set it up with Hermes](#set-it-up-with-hermes)
 
@@ -29,8 +29,12 @@ Here is the reminder title the workflow produces from the [synthetic fixture](fi
 
 ### Review and deliver a digest
 
+With the three optional checks configured, one reminder can look like this. These names and conditions are illustrative.
+
+> Review Home Assistant: maintenance (3): Garage Hub unavailable 2h; Home Assistant Backup backup stale; HVAC Filter on
+
 - **Inspect findings first.** `doctor` checks the connection, Reminders authorization, destination list, and tracking state. `preview` shows the proposed title and each finding. `preview --json` returns counts and structured details.
-- **Create one task.** An approved send adds a single digest due that day to an existing Apple Reminders list. A saved fingerprint suppresses repeat writes for unchanged findings. A changed percentage or version can trigger another digest. A clean run allows a later recurrence.
+- **Create one task.** An approved send adds a single digest due that day to an existing Apple Reminders list. A saved fingerprint covers all five categories and suppresses repeat writes for unchanged findings. A changed battery percentage, update version, or optional maintenance finding can trigger another digest. A clean run allows a later recurrence.
 - **Run on a schedule.** Hermes sets up a paused script-only job on the Mac. Review a preview, verify the first approved reminder in the list, then activate the chosen schedule. Clean and duplicate-suppressed runs stay silent.
 
 ## Quickstart
@@ -139,7 +143,7 @@ For an approved write, run `~/.local/share/home-assistant-maintenance/venv/bin/h
 
 ### Verification and limitations
 
-The original battery/update workflow was verified on macOS with real read-only Home Assistant checks, Apple Reminders delivery, duplicate suppression, and one-time scheduled delivery. The outage, backup, and indicator checks have synthetic offline and installed-CLI coverage only. First-time macOS authorization and compatibility with your Recorder or backup integration need local verification.
+The original battery/update workflow was verified on macOS with real read-only Home Assistant checks, Apple Reminders delivery, duplicate suppression, and one-time scheduled delivery. The outage, backup, and indicator checks have synthetic offline and installed-CLI coverage only. Live Home Assistant history and backup integrations, Reminders writes for those three categories, and their scheduled delivery still need verification. The Mac used for the original checks already had Reminders permission. First-time authorization depends on your machine.
 
 Delivery supports Apple Reminders on macOS. Email, urgent alarm monitoring, automatic updates, and management of per-device tasks are outside the current release. [Portability notes](docs/PORTABILITY_GAPS.md) · [Behavior audit](docs/BEHAVIOR_AUDIT.md)
 
