@@ -1,210 +1,157 @@
 # Home Assistant Maintenance Workflow
 
-**Turn Home Assistant maintenance signals—low batteries, updates, persistent outages, backup problems, and integration-reported faults—into actionable Apple Reminders, with Hermes handling setup and scheduled checks.**
+Get one Apple Reminder when a new set of home maintenance jobs needs attention. The workflow runs on your Mac, reads a reachable Home Assistant instance, gathers low batteries and available updates, and can also flag persistent outages, backup problems, and service indicators you select.
 
-A smart home needs maintenance, too. Door locks run low on batteries. Alarm keypads and contact sensors need attention. Home Assistant, integrations, and device firmware have updates waiting. Instead of checking every device and update screen yourself, this workflow gathers those maintenance items into a reminder you can act on.
+**[Try the offline quickstart](#quickstart)** · [Set it up with Hermes](#set-it-up-with-hermes)
 
-Built for **Hermes on a Mac + Home Assistant + Apple Reminders**. Your home stays under your control: the workflow reads status, but never installs updates, unlocks doors, arms or disarms alarms, or changes devices.
+<a id="what-a-reminder-looks-like"></a>
 
-## Features
+Here is the reminder title the workflow produces from the [synthetic fixture](fixtures/home_assistant_states.synthetic.json) with the default thresholds.
 
-### Low-battery reminders
+> Review Home Assistant: updates (1): Example Hub Firmware 1.2.3→1.2.4 | low batteries (2): Example Phone Battery 5%; Example Window Battery 24%
 
-- **Smart door locks:** catch low batteries before a lock stops responding.
-- **Alarm and security devices:** track battery levels for compatible alarm keypads, door/window contacts, and motion sensors.
-- **Other battery-powered devices:** include temperature, humidity, air-quality, and other sensors exposed through Home Assistant.
-- **Your own thresholds:** use a default low-battery threshold or set a higher threshold for a particular device, such as a door lock.
-- **Control what matters:** exclude devices you do not want in your maintenance digest and give battery items clearer names.
-- **Ignore invalid readings:** unavailable, nonnumeric, negative, and out-of-range battery percentages are not treated as low batteries.
+<a id="features"></a>
 
-Battery checks require Home Assistant to expose a numeric percentage with `%` as the unit and either the battery device class or `battery` in the entity ID. Binary low-battery warnings and devices without a percentage are not currently supported. Device examples above are supported through those Home Assistant entities—not separate vendor integrations.
+## What it can do
 
-### Home Assistant and device update reminders
+### Find batteries and updates that need attention
 
-- **Home Assistant upgrades:** see available Core, OS, Supervisor, or add-on updates when your installation exposes them as update entities.
-- **Integration and dashboard updates:** include HACS integrations and custom cards when they expose an update entity.
-- **Device firmware updates:** include supported hubs and other devices whose integrations report available firmware updates.
-- **Version details:** see installed and available versions where Home Assistant provides them.
-- **Update exclusions:** leave selected update entities out of the digest.
+- <a id="low-battery-reminders"></a>**Batteries.** Find locks, alarm keypads, contact sensors, and other devices that expose a numeric battery percentage. By default, 25% or lower qualifies. Give a critical lock a higher threshold, rename it in the digest, or exclude a device.
+- <a id="home-assistant-and-device-update-reminders"></a>**Updates.** List available Home Assistant Core, OS, Supervisor, add-on, HACS, or firmware updates when the integration exposes an `update.*` entity whose state is `on`. Include installed and available versions when present and exclude selected updates.
 
-The workflow reads `update.*` entities whose state is `on`. It does not independently check vendor websites or discover updates that Home Assistant does not expose.
+### Watch conditions that matter in your home
 
-### Persistent unavailable entities
+- <a id="persistent-unavailable-entities"></a>**Persistent outages.** Choose entities and a duration for each. A device must currently report `unavailable`, with Recorder history covering the threshold window. A normal state within that window resets the clock.
+- <a id="backup-health"></a>**Backup health.** Match explicit failure states, flag a last-success timestamp older than your chosen limit, or use both checks. Read the timestamp from an entity state or a named attribute. Separate rules can cover separate status and timestamp entities.
+- <a id="integration-provided-maintenance-indicators"></a>**Service and fault indicators.** Map a filter, consumable, appliance fault, or service flag to exact states or a numeric threshold. A mapping can read an attribute and require a matching unit.
 
-- Opt in individual entities with `unavailable_entities`; the safe default is an empty list.
-- Set a duration such as `90m`, `2h`, or `1d` for each entity.
-- A finding is emitted only when the current state is exactly `unavailable` **and** bounded Home Assistant history proves it stayed unavailable for the entire threshold window.
-- A normal state inside the window resets persistence. Missing, partial, or malformed history is treated as insufficient evidence, not as an outage.
-- The fingerprint uses the current state's stable `last_changed` when available, never the history API's moving start-of-window baseline. If `last_changed` is missing or malformed, it falls back to the entity ID; this prevents repeated reminders while continuously unavailable, but an outage that clears and recurs entirely between polls may remain suppressed until a clean poll is observed.
+<a id="delivered-where-you-already-manage-tasks"></a>
 
-This is intentionally not an automatic scan of every unavailable entity. Explicit selection avoids reminders for intentionally sleeping, disabled, or intermittently connected devices. Preview uses read-only `GET` requests, including the history request when this category is configured.
+### Review and deliver a digest
 
-### Backup health
+With the three optional checks configured, one reminder can look like this. These names and conditions are illustrative.
 
-Home Assistant and backup integrations do not expose one universal entity schema. Configure the entity and its meaning explicitly under `backup_entities`:
+> Review Home Assistant: maintenance (3): Garage Hub unavailable 2h; Home Assistant Backup backup stale; HVAC Filter on
 
-- `failure_states` matches exact configured states, case-insensitively.
-- `max_age` checks an ISO 8601 completion timestamp from the entity state, or from the explicitly named `timestamp_attribute`.
-- Offset-aware timestamps are honored. A naive timestamp requires an explicit IANA `timestamp_timezone` such as `America/Chicago`.
-- Missing, `unknown`, malformed, or timezone-ambiguous timestamps are **not** labeled stale. The workflow reports only configured failures and timestamps proven older than `max_age`.
+- **Inspect findings first.** `doctor` checks the connection, Reminders authorization, destination list, and tracking state. `preview` shows the proposed title and each finding. `preview --json` returns counts and structured details.
+- **Create one task.** An approved send adds a single digest due that day to an existing Apple Reminders list. A saved fingerprint covers all five categories and suppresses repeat writes for unchanged findings. A changed battery percentage, update version, or optional maintenance finding can trigger another digest. A clean run allows a later recurrence.
+- **Run on a schedule.** Hermes sets up a paused script-only job on the Mac. Review a preview, verify the first approved reminder in the list, then activate the chosen schedule. Clean and duplicate-suppressed runs stay silent.
 
-Use separate rules if an integration exposes status and last-success time as separate entities. The examples are synthetic; inspect your integration's actual entities before configuring them.
+## Quickstart
 
-### Integration-provided maintenance indicators
+To try the digest without credentials, use Python 3.11 or later on macOS or Linux. These commands call the package’s preview function on the bundled sample.
 
-Configure filters, consumables, service flags, and faults under `maintenance_indicators`. Each mapping must use exactly one explicit mode:
+```bash
+git clone https://github.com/jclark2496/home-assistant-maintenance.git
+cd home-assistant-maintenance
+PYTHONPATH=src python3 - <<'PY'
+import json
+from pathlib import Path
+from home_maintenance_digest import DigestConfig, make_preview
 
-- `problem_states`: exact configured states such as `on`, `replace`, `fault`, or `error`; or
-- `operator` + numeric `threshold`: `lt`, `lte`, `gt`, `gte`, `eq`, or `ne`, optionally requiring an exact Home Assistant unit with `unit`.
+states = json.loads(Path("fixtures/home_assistant_states.synthetic.json").read_text())
+rules = DigestConfig(reminder_list="Home Maintenance")
+print(make_preview(states, rules).title)
+PY
+```
 
-Values may come from the entity state or an explicit `value_attribute`. The workflow does not guess alarm states, interpret arbitrary text, or treat every binary sensor as a fault. Nonnumeric/nonfinite values and mismatched units do not trigger numeric rules.
+You should see the title above with one firmware update and two low batteries. The example reads a local file. To preview findings from your own home, follow the Hermes setup below.
 
-### Delivered where you already manage tasks
+## One design decision
 
-- **Apple Reminders delivery:** send a consolidated maintenance reminder to a list you choose.
-- **Scheduled checks through Hermes:** choose a recurring schedule during setup, with your approval before activation.
-- **Preview before sending:** review real findings without creating any reminders.
-- **Duplicate suppression:** unchanged findings do not create another reminder when using the same tracking state.
-- **Verified local delivery:** read the created reminder back from the selected list before confirming success.
-
-This creates **one digest reminder per changed set of findings**, not a separate task for every device. Existing reminders are never automatically completed or deleted. A changed battery percentage or update version can produce a new digest even if the underlying maintenance task is still outstanding.
-
-## What a reminder looks like
-
-Illustrative example—not data from a real home:
-
-> **Review Home Assistant: updates (1): Home Assistant Core 2026.10.0→2026.10.1 | low batteries (1): Front Door Lock 18% | maintenance (3): Garage Hub unavailable 2h; Home Assistant Backup backup stale; HVAC Filter on**
-
-The default title shows up to six updates, eight battery items, and eight additional maintenance findings, with a `+N more` summary when needed. Item limits and maximum title length are configurable. The current reminder is a compact digest, not a full checklist; the CLI preview provides the detailed findings.
+**Record the delivery attempt before asking Reminders to write.** A timeout can happen after macOS has accepted the reminder. The workflow saves a unique marker, adds it to the reminder, then reads the selected list back for that marker. If the outcome is uncertain, the next run checks for the marker before any new write. This protects against duplicate tasks even when the first command’s reply is lost.
 
 ## Set it up with Hermes
 
-Give Hermes this request:
-
-> Install the Home Assistant Maintenance Workflow from https://github.com/jclark2496/home-assistant-maintenance. Read its included skill and setup instructions first. Check prerequisites, guide me through secure local credential entry and Apple Reminders permissions, show me a preview, verify a first delivery with my approval, then help me enable a recurring schedule. Do not change Home Assistant devices or install updates.
-
-Hermes walks through:
-
-1. Installing the package and checking the required tools.
-2. Connecting to your Home Assistant instance using a token you enter locally—not in chat.
-3. Checking Apple Reminders permission and your chosen list.
-4. Setting battery thresholds and explicit entity mappings for any additional maintenance categories you want.
-5. Showing the maintenance items it found.
-6. Sending and verifying an approved first reminder.
-7. Setting up and verifying a schedule after you approve it.
-
-**Hermes coordinates the workflow; it does not bypass access requirements.** You still need Home Assistant access, macOS Reminders permission, and a Mac that is running and able to reach Home Assistant when checks are scheduled. The repository must be accessible to your GitHub account.
-
 ### Requirements
 
-| Component | What you need |
-| --- | --- |
-| Hermes Agent | Installed on the Mac that will run the checks |
-| Home Assistant | A reachable instance and a valid access token |
-| Apple Reminders | An existing destination list and permission for the runtime to access it |
-| Python | Version 3.11 or newer |
-| Reminders bridge | `remindctl`, available to the scheduled runtime |
+For delivery, use a Mac running Hermes Agent, Python 3.11 or newer, and `remindctl`. The Mac needs access to Home Assistant, a valid token, a signed-in Apple account, an existing Reminders list, and Reminders permission for the process that will run the job. For scheduled checks, the Mac and the Hermes scheduler must be running at the scheduled time.
 
-See the [guided setup and scheduling instructions](docs/HERMES_SETUP.md) and the [included Hermes skill](skills/home-assistant-maintenance/SKILL.md).
+Give Hermes the following request.
+
+> Install the Home Assistant Maintenance Workflow from https://github.com/jclark2496/home-assistant-maintenance. Read its included skill and setup guide. Check my prerequisites, guide me through local credential entry and Reminders permissions, and show me a read-only preview. Ask before sending a first reminder or activating a recurring schedule.
+
+Hermes installs the package and skill, checks access to your list, helps map entities, and previews what needs attention. A configured home with no findings produces `No actionable maintenance findings.` Verify any first write in the chosen list before enabling the recurring job. [Hermes setup and scheduling](docs/HERMES_SETUP.md) · [Included skill](skills/home-assistant-maintenance/SKILL.md)
 
 ## What you can customize
 
-- Destination Apple Reminders list.
-- Default low-battery threshold (25% by default).
-- Per-device battery thresholds and friendly names.
-- Battery and update entities to ignore.
-- Explicit unavailable entities and per-entity persistence thresholds.
-- Explicit backup failure states, last-success timestamp source, maximum age, and timezone semantics.
-- Explicit integration indicator states or numeric threshold/unit mappings.
-- Reminder title prefix and display limits.
-- Connection timeouts and local tracking-state location.
-- Check schedule, managed separately through Hermes.
+`configure` creates local settings in `~/.config/home-assistant-maintenance/config.json` and a separate owner-only `credentials.json`. Enter the token at the hidden local prompt. Use the [example config](config.example.json) as a reference for entity IDs and attributes you have inspected in your own Home Assistant.
 
-See [config.example.json](config.example.json). Local configuration and credentials stay outside the repository.
+| Setting | What it changes |
+| --- | --- |
+| Batteries and updates | Default and per-device thresholds, friendly battery names, and entity exclusion lists. |
+| Destination and title | Reminders list, title prefix, item counts, and maximum title length. The defaults show up to 6 updates, 8 batteries, and 8 other findings in 900 characters. `+N more` marks overflow within a category. The full findings remain available in the preview. |
+| Runtime | Connection and Reminders timeouts, `remindctl` path, and tracking-state location. Choose the schedule and timezone separately in Hermes. |
+
+<a id="new-category-configuration-reference"></a>
+
+### Optional entity rules
+
+All three lists default to `[]`. Adding the workflow to an existing battery/update setup leaves these checks opt-in. Durations such as `90m`, `2h`, or `1d` accept the suffixes `s`, `m`, `h`, `d`, and `w`.
+
+| Key | Required | Optional |
+| --- | --- | --- |
+| `unavailable_entities` | `entity_id` | `name`, `threshold` (default `2h`) |
+| `backup_entities` | `entity_id` and at least one of `failure_states` or `max_age` | `name`, `timestamp_attribute`, `timestamp_timezone` |
+| `maintenance_indicators` | `entity_id` and exactly one of `problem_states` or `operator` + `threshold` | `name`, `unit`, `value_attribute` |
+
+Use an ISO 8601 backup timestamp with an offset, or specify an IANA timezone for a local timestamp. Failure and problem states match whole values, case-insensitively. Numeric operators are `lt`, `lte`, `gt`, `gte`, `eq`, and `ne`. Nonnumeric values, nonfinite values, and unit mismatches do not trigger numeric rules.
+
+Each entity may appear once within a category. If the same entity matches multiple optional categories, the digest prefers the outage, then the backup finding, then the indicator. Battery and update findings are evaluated independently.
 
 ## Safety and privacy
 
-- **Home Assistant is read-only.** The adapter only uses `GET /api/`, `GET /api/states`, and bounded `GET /api/history/period/...` requests for explicitly configured unavailable entities. It never changes devices or installs updates.
-- **Sending is explicit.** The CLI requires `send --yes`; installation and preview do not create reminders. Scheduling is a separate approved step.
-- **Credentials stay local.** Hidden token entry keeps the token out of chat and command-line arguments. Credential and state files use owner-only permissions.
-- **Delivery checks are attempt-specific.** Each write has a unique marker saved before delivery and checked in the destination list afterward.
-- **Uncertain delivery stops further writes.** A timeout or unverified result is not blindly retried; inspect Reminders and resolve the pending state first.
-- **Overlapping runs are blocked.** A file lock protects a shared tracking-state store, and invalid state blocks writes rather than risking duplicates.
-- **Your existing reminders are preserved.** Nothing is automatically deleted or completed.
-
-Local readback verifies a record in macOS Reminders; it does not prove iCloud has synchronized it to every device. Home maintenance details placed in Apple Reminders are subject to your Apple account's normal synchronization settings.
+- Home Assistant access is read-only. The adapter uses `GET /api/` and `GET /api/states`. When outage rules are configured, it also reads a bounded interval of history for the selected entities. Device control and update installation stay in Home Assistant.
+- Installation and preview only prepare or read data. Reminder creation requires `send --yes` or a scheduled job you have activated. Existing reminders are left for you to complete or delete.
+- Configuration, credentials, and state stay outside the repository. Credential and state files are owner-only. A lock prevents overlapping writes against a shared state file, and invalid state blocks a send.
+- Readback confirms delivery to the list on that Mac. Synchronization to other devices follows your Apple account settings.
 
 ## Installation reference
 
-This section is for Hermes or anyone who wants to inspect the setup steps. The primary path is the Hermes request above.
-
-After cloning the repository:
+For the default Hermes profile, run the following from the cloned repository. For another profile, use its skill and script directories.
 
 ```bash
-cd home-assistant-maintenance
 python3 -m venv ~/.local/share/home-assistant-maintenance/venv
 ~/.local/share/home-assistant-maintenance/venv/bin/python -m pip install .
-mkdir -p ~/.hermes/skills/home-assistant-maintenance
+mkdir -p ~/.hermes/skills/home-assistant-maintenance ~/.hermes/scripts
 cp skills/home-assistant-maintenance/SKILL.md ~/.hermes/skills/home-assistant-maintenance/SKILL.md
+cp scripts/home-assistant-maintenance.py ~/.hermes/scripts/home-assistant-maintenance.py
+chmod 700 ~/.hermes/scripts/home-assistant-maintenance.py
 ```
 
-The skill path above is for the default Hermes profile. Use the intended profile's skills directory when installing for another profile. Start a fresh Hermes session after installing the skill.
-
-Configure locally using hidden credential input:
+Start a fresh Hermes session to load the skill. Configure the CLI locally, check permissions, and inspect the first preview.
 
 ```bash
 ~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance configure
-```
-
-Then verify and preview before approving a send:
-
-```bash
 ~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance doctor
 ~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance preview
-# Only after reviewing and approving the preview:
-~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance send --yes
 ```
 
-Configuration is stored in `~/.config/home-assistant-maintenance/config.json` and `credentials.json`. Never commit either local file. Follow [HERMES_SETUP.md](docs/HERMES_SETUP.md) for paused-first scheduling and verification from the actual scheduled runtime.
-
-### New-category configuration reference
-
-All three new lists default to `[]`, so upgrading preserves the existing battery/update behavior until you opt in. Durations accept a positive number followed by `s`, `m`, `h`, `d`, or `w`.
-
-| Config key | Required fields | Optional fields |
-| --- | --- | --- |
-| `unavailable_entities` | `entity_id` | `name`, `threshold` (default `2h`) |
-| `backup_entities` | `entity_id`, and at least one of `failure_states` or `max_age` | `name`, `timestamp_attribute`, `timestamp_timezone` |
-| `maintenance_indicators` | `entity_id`, plus exactly one of `problem_states` or `operator` + `threshold` | `name`, `unit`, `value_attribute` |
-
-Duplicate entity mappings inside one category are rejected. If the same entity produces more than one **new-category** finding, preview keeps one in this order: unavailable, backup, then indicator. Existing battery and update findings remain independent. All categories contribute to the digest fingerprint and stored counts, so a changed new-category finding can create a new digest; a clean run allows a later recurrence.
+For an approved write, run `~/.local/share/home-assistant-maintenance/venv/bin/ha-maintenance send --yes`. For scheduling, create the job paused, verify access in the actual scheduled context, and resume it after approval. [Scheduling commands](docs/HERMES_SETUP.md)
 
 ## Troubleshooting
 
-- **No battery item for a device?** Check that Home Assistant exposes a valid battery percentage and that it meets your threshold and is not excluded.
-- **No update listed?** The integration must expose an `update.*` entity with state `on`.
-- **Unavailable entity not listed?** Confirm it is explicitly configured, currently exactly `unavailable`, and Recorder/history covers the entire threshold window. Insufficient history fails closed.
-- **Backup not listed?** Confirm your configured entity schema. Unknown or ambiguous timestamps are deliberately not called stale.
-- **Indicator not listed?** Confirm the exact state spelling or numeric value and unit exposed by Home Assistant; no fault states are inferred.
-- **No new reminder?** Unchanged findings are intentionally suppressed. Check `preview` and `doctor` before assuming a failure.
-- **Works interactively but not on schedule?** Confirm the scheduled process can find `remindctl` and has macOS Reminders permission. Test that context separately.
-- **Delivery is uncertain?** Inspect the destination list before resolving it. Do not reset state just to retry: that can create duplicates.
+| Symptom | What to check |
+| --- | --- |
+| Missing battery or update | A battery must expose a 0–100 number with unit `%` and either the battery device class or `battery` in its entity ID. A binary low-battery flag is insufficient. Updates require an `update.*` entity with state `on`. Check exclusions. |
+| Missing outage | Select the entity explicitly and check Recorder coverage of the whole window. A normal state or insufficient evidence suppresses the finding. The current `last_changed` identifies an outage episode. If that field is missing or malformed, an outage that clears and recurs between polls can stay suppressed until a clean poll is seen. |
+| Missing backup or indicator | Inspect the actual entity state, attributes, units, and configured rules. Missing, malformed, or timezone-ambiguous timestamps cannot establish an overdue backup. |
+| No new reminder | Check `preview` and `doctor`. An unchanged digest is suppressed. For a scheduled-only failure, verify `remindctl` and Reminders permission from the scheduled process. |
+| Uncertain delivery | Inspect the configured list. Use `resolve --outcome delivered --yes` or `resolve --outcome not-delivered --yes` only after establishing what happened. Leave an unresolved job paused. `state-reset --yes` backs up the prior state but can permit a duplicate. |
 
-Use the installed CLI's `--help` for `resolve` and `state-reset`. State reset preserves a backup but should only follow manual review.
+## Project details
 
-## Verification and limitations
+### Verification and limitations
 
-The original battery/update package was tested through a fresh isolated installation, real read-only Home Assistant checks, direct Apple Reminders delivery, duplicate suppression, and a one-time Hermes scheduled delivery on macOS. The additional unavailable, backup, and indicator categories have synthetic offline coverage and an isolated installed-CLI check only. They have **not** been tested against a real Home Assistant history/backup integration or used for a live reminder write or scheduled job.
+The original battery/update workflow was verified on macOS with real read-only Home Assistant checks, Apple Reminders delivery, duplicate suppression, and one-time scheduled delivery. The outage, backup, and indicator checks have synthetic offline and installed-CLI coverage only. Live Home Assistant history and backup integrations, Reminders writes for those three categories, and their scheduled delivery still need verification. The Mac used for the original checks already had Reminders permission. First-time authorization depends on your machine.
 
-First-time macOS permission prompts still depend on the user's machine. The tested Mac already had working Home Assistant access and Reminders authorization. This is a maintenance digest—not an alarm-monitoring service, urgent security alert system, automatic updater, or per-device task reconciliation engine.
+Delivery supports Apple Reminders on macOS. Email, urgent alarm monitoring, automatic updates, and management of per-device tasks are outside the current release. [Portability notes](docs/PORTABILITY_GAPS.md) · [Behavior audit](docs/BEHAVIOR_AUDIT.md)
 
-**Email delivery is not implemented.** The supported destination is Apple Reminders on macOS.
+<a id="optional-run-tests-without-hermes"></a>
 
-## Optional: run tests without Hermes
+### Offline tests
 
-By the way, the Python package can also be installed and tested independently of Hermes. This is useful for contributors; it is not required for normal Hermes-led setup.
-
-All automated tests use synthetic entities and fake destinations. They do not contact your home or write reminders.
+In an activated Python 3.11+ virtual environment, run the following from the repo root. The suite uses synthetic entities and fake destinations. CI also builds and installs the wheel and smoke-tests the installed CLI on macOS with Python 3.11–3.13. [CI workflow](.github/workflows/test.yml)
 
 ```bash
 python3 -m pip install '.[dev]'
@@ -212,8 +159,6 @@ python3 -m unittest discover -s tests -v
 python3 -m build
 ```
 
-GitHub CI builds and installs the wheel on macOS with Python 3.11–3.13, runs the offline suite, and checks the installed CLI.
+### License
 
-## License
-
-MIT
+[MIT](LICENSE) · [Forkthis build notes](https://forkthis.ai/home-assistant-maintenance/)
